@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ur" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FMCSA Email Scraper</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f4f6f9; font-family: system-ui, -apple-system, sans-serif; }
+        .card { border-radius: 12px; border: none; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        .email-box { background: #ffffff; border: 1px solid #ced4da; min-height: 200px; max-height: 300px; overflow-y: auto; padding: 12px; border-radius: 8px; font-family: monospace; }
+        .nav-pills .nav-link.active { background-color: #0d6efd; }
+    </style>
+</head>
+<body class="p-3">
+
+<div class="container" style="max-width: 600px;">
+    <h3 class="text-center mb-3 text-primary fw-bold">FMCSA Email Extractor</h3>
+    
+    <!-- PDF Upload Card -->
+    <div class="card p-3 mb-4">
+        <form id="uploadForm">
+            <div class="mb-3">
+                <label class="form-label font-weight-bold">پی ڈی ایف فائل منتخب کریں:</label>
+                <input type="file" class="form-control" id="pdfFile" accept=".pdf" required>
+            </div>
+            <button class="btn btn-primary w-100 fw-bold" type="submit" id="submitBtn">Extract Emails</button>
+        </form>
+    </div>
+
+    <!-- Results Section -->
+    <div id="resultsSection" style="display: none;">
+        
+        <!-- Main Category Tabs -->
+        <ul class="nav nav-tabs mb-3 nav-justified" id="mainTab" role="tablist">
+            <li class="nav-item">
+                <button class="nav-link active fw-bold" id="carriers-tab" data-bs-toggle="tab" data-bs-target="#carriers" type="button">🚛 Carriers</button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link fw-bold" id="brokers-tab" data-bs-toggle="tab" data-bs-target="#brokers" type="button">🏢 Brokers</button>
+            </li>
+        </ul>
+
+        <div class="tab-content" id="mainTabContent">
+            
+            <!-- CARRIERS -->
+            <div class="tab-pane fade show active" id="carriers">
+                <div class="card p-3">
+                    <ul class="nav nav-pills mb-3 nav-justified">
+                        <li class="nav-item"><button class="nav-link active btn-sm" onclick="showList('carriers', 'active')">Active</button></li>
+                        <li class="nav-item"><button class="nav-link btn-sm" onclick="showList('carriers', 'inactive')">Inactive</button></li>
+                        <li class="nav-item"><button class="nav-link btn-sm" onclick="showList('carriers', 'pending')">Pending</button></li>
+                        <li class="nav-item"><button class="nav-link btn-sm" onclick="showList('carriers', 'rejected')">Rejected</button></li>
+                    </ul>
+                    
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="m-0 text-secondary fw-bold" id="carriersStatusTitle">Active Carrier Emails</h6>
+                        <button class="btn btn-success btn-sm" onclick="copyEmails('carriersEmailList')">📋 Copy All</button>
+                    </div>
+                    
+                    <div class="email-box">
+                        <ul id="carriersEmailList" class="list-unstyled mb-0"></ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BROKERS -->
+            <div class="tab-pane fade" id="brokers">
+                <div class="card p-3">
+                    <ul class="nav nav-pills mb-3 nav-justified">
+                        <li class="nav-item"><button class="nav-link active btn-sm" onclick="showList('brokers', 'active')">Active</button></li>
+                        <li class="nav-item"><button class="nav-link btn-sm" onclick="showList('brokers', 'inactive')">Inactive</button></li>
+                        <li class="nav-item"><button class="nav-link btn-sm" onclick="showList('brokers', 'pending')">Pending</button></li>
+                        <li class="nav-item"><button class="nav-link btn-sm" onclick="showList('brokers', 'rejected')">Rejected</button></li>
+                    </ul>
+                    
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="m-0 text-secondary fw-bold" id="brokersStatusTitle">Active Broker Emails</h6>
+                        <button class="btn btn-success btn-sm" onclick="copyEmails('brokersEmailList')">📋 Copy All</button>
+                    </div>
+                    
+                    <div class="email-box">
+                        <ul id="brokersEmailList" class="list-unstyled mb-0"></ul>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+let globalData = {};
+let currentCategory = 'carriers';
+let currentStatus = 'active';
+
+document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const fileInput = document.getElementById('pdfFile');
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+
+    document.getElementById('submitBtn').innerText = "پی ڈی ایف پروسیس ہو رہی ہے...";
+    document.getElementById('submitBtn').disabled = true;
+
+    try {
+        const response = await fetch('/api/process-pdf', { method: 'POST', body: formData });
+        globalData = await response.json();
+
+        document.getElementById('resultsSection').style.display = 'block';
+        renderEmails('carriers', 'active');
+        renderEmails('brokers', 'active');
+    } catch(err) {
+        alert("ڈیٹا پروسیس کرنے میں مسئلہ آیا ہے، دوبارہ کوشش کریں۔");
+    } finally {
+        document.getElementById('submitBtn').innerText = "Extract Emails";
+        document.getElementById('submitBtn').disabled = false;
+    }
+});
+
+function showList(category, status) {
+    currentCategory = category;
+    currentStatus = status;
+    renderEmails(category, status);
+}
+
+function renderEmails(category, status) {
+    const listId = `${category}EmailList`;
+    const titleId = `${category}StatusTitle`;
+    
+    document.getElementById(titleId).innerText = `${status.toUpperCase()} ${category.toUpperCase()} Emails`;
+    
+    const ul = document.getElementById(listId);
+    ul.innerHTML = '';
+    
+    const emails = (globalData[category] && globalData[category][status]) ? globalData[category][status] : [];
+    
+    if(emails.length === 0) {
+        ul.innerHTML = '<li class="text-muted">کوئی ای میل نہیں ملی۔</li>';
+        return;
+    }
+    
+    emails.forEach(email => {
+        const li = document.createElement('li');
+        li.textContent = email;
+        ul.appendChild(li);
+    });
+}
+
+function copyEmails(listId) {
+    const list = document.getElementById(listId);
+    const emails = Array.from(list.querySelectorAll('li')).map(li => li.textContent).filter(e => !e.includes('کوئی ای میل'));
+    
+    if(emails.length === 0) {
+        alert("کاپی کرنے کے لیے کوئی ای میل موجود نہیں ہے!");
+        return;
+    }
+    
+    navigator.clipboard.writeText(emails.join('\n'));
+    alert('تمام ای میلز کامیابی سے کاپی ہو چکی ہیں!');
+}
+</script>
+</body>
+</html>
