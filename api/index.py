@@ -1,63 +1,61 @@
 import re
 import pdfplumber
-import requests
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-def extract_data_from_pdf(pdf_file):
-    extracted_records = []
+def extract_emails_and_categories(pdf_file):
+    results = {
+        'brokers': {'active': [], 'inactive': [], 'pending': [], 'rejected': []},
+        'carriers': {'active': [], 'inactive': [], 'pending': [], 'rejected': []}
+    }
+    
+    # Regex pattern to match standard emails
+    email_pattern = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
+
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
             if not text:
                 continue
+            
             lines = text.split('\n')
-            current_category = "Carrier"
+            current_category = 'carriers'
+            current_status = 'active'
+            
             for line in lines:
-                if "BROKER OF" in line.upper():
-                    current_category = "Broker"
-                elif "MOTOR CARRIER OF" in line.upper() or "FREIGHT FORWARDER" in line.upper():
-                    current_category = "Carrier"
+                line_upper = line.upper()
                 
-                # USDOT یا MC نمبر نکالنا
-                dot_match = re.search(r'(?:USDOT|MC|FF)\s*[-#]?\s*(\d+)', line, re.IGNORECASE)
-                if dot_match:
-                    num = dot_match.group(1)
-                    extracted_records.append({
-                        'type': current_category,
-                        'id': num
-                    })
-    return extracted_records
+                # Category Detection
+                if "BROKER" in line_upper:
+                    current_category = 'brokers'
+                elif "CARRIER" in line_upper or "FREIGHT FORWARDER" in line_upper:
+                    current_category = 'carriers'
+                
+                # Status Detection
+                if "INACTIVE" in line_upper or "REVOKED" in line_upper or "DISMISSED" in line_upper:
+                    current_status = 'inactive'
+                elif "PENDING" in line_upper:
+                    current_status = 'pending'
+                elif "REJECTED" in line_upper or "DENIED" in line_upper:
+                    current_status = 'rejected'
+                elif "ACTIVE" in line_upper or "GRANTED" in line_upper:
+                    current_status = 'active'
+                
+                # Extract Emails from line
+                found_emails = email_pattern.findall(line)
+                for email in found_emails:
+                    clean_email = email.strip().lower()
+                    # Filter out useless files/extensions that match email patterns
+                    if not clean_email.endswith(('.png', '.jpg', '.jpeg', '.pdf', '.gif')):
+                        results[current_category][current_status].append(clean_email)
 
-def fetch_fmcsa_details(id_number):
-    try:
-        # FMCSA Public API Endpoint
-        url = f"https://mobile.fmcsa.dot.gov/qc/services/carriers/{id_number}?webKey=c323f46f4eb27eb294e75cb70d65427d1a5bf068"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=5)
-        
-        if response.status_code == 200:
-            data = response.json()
-            carrier = data.get('content', {}).get('carrier', {})
-            if carrier:
-                email = carrier.get('emailAddress')
-                allowed = carrier.get('allowedToOperate', 'N')
-                
-                if allowed == 'Y':
-                    status = 'active'
-                elif allowed == 'N':
-                    status = 'inactive'
-                elif 'P' in str(allowed):
-                    status = 'pending'
-                else:
-                    status = 'rejected'
-                    
-                if email and "@" in email and email.lower() != "none":
-                    return email.strip(), status
-    except Exception:
-        pass
-    return None, None
+    # Remove Duplicates
+    for cat in results:
+        for st in results[cat]:
+            results[cat][st] = sorted(list(set(results[cat][st])))
+            
+    return results
 
 @app.route('/api/process-pdf', methods=['POST'])
 def process_pdf():
@@ -65,26 +63,11 @@ def process_pdf():
         return jsonify({'error': 'No file uploaded'}), 400
         
     file = request.files['file']
-    records = extract_data_from_pdf(file)
-    
-    results = {
-        'brokers': {'active': [], 'inactive': [], 'pending': [], 'rejected': []},
-        'carriers': {'active': [], 'inactive': [], 'pending': [], 'rejected': []}
-    }
-    
-    for record in records:
-        email, status = fetch_fmcsa_details(record['id'])
-        if email and status:
-            category = 'brokers' if record['type'] == 'Broker' else 'carriers'
-            results[category][status].append(email)
-            
-    # ڈوپلیکیٹ ختم کرنا
-    for cat in results:
-        for st in results[cat]:
-            results[cat][st] = list(set(results[cat][st]))
-            
-    return jsonify(results)
+    try:
+        results = extract_emails_and_categories(file)
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-# Vercel Serverless Entry Point
 def handler(request, start_response):
     return app(request, start_response)
