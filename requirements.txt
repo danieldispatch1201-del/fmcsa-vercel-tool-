@@ -1,3 +1,4 @@
 flask
 pdfplumber
 requests
+beautifulsoup4
